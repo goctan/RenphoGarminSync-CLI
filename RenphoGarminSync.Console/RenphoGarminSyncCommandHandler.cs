@@ -1,4 +1,5 @@
-﻿using RenphoGarminSync.Console;
+
+using RenphoGarminSync.Console;
 using RenphoGarminSync.Console.Models;
 using RenphoGarminSync.Console.Persistence;
 using RenphoGarminSync.ConsoleApp.Persistence;
@@ -64,6 +65,7 @@ namespace RenphoGarminSync.ConsoleApp
             {
                 var renphoUserId = await GetRenphoApiUserIdAsync(_renphoProfile);
                 var measurements = await GetMeasurementsForUserAsync(renphoUserId);
+
                 if (!measurements.Any())
                 {
                     AnsiConsole.MarkupLine("[maroon]No measurements were found for current Renpho user.[/]");
@@ -72,6 +74,7 @@ namespace RenphoGarminSync.ConsoleApp
 
                 var measurementIds = measurements.Select(x => x.Id.Value);
                 var newMeasurementIds = (await _measurementsRepository.FilterOutHandledMeasurementsAsync(renphoUserId, measurementIds)).ToHashSet();
+
                 if (!newMeasurementIds.Any())
                 {
                     AnsiConsole.MarkupLine("[green]No new measurements have been detected.[/]");
@@ -81,6 +84,7 @@ namespace RenphoGarminSync.ConsoleApp
 
                 var newMeasurements = measurements.Where(x => newMeasurementIds.Contains(x.Id.Value));
                 DrawMeasurementsTable("New Measurements", newMeasurements);
+
                 if (_dryRun)
                 {
                     AnsiConsole.MarkupLine("[green]Dry run - Skipping processing of the measurements.[/]");
@@ -91,13 +95,16 @@ namespace RenphoGarminSync.ConsoleApp
                 {
                     var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
                     var fileName = $"Renpho_{measurement.Id}.fit";
+
                     if (!_noFitFiles)
                         await SaveFitFile(measurement, fitContent, fileName);
 
                     var result = await _garminApi.UploadActivity(fileName, fitContent);
+
                     if (result?.DetailedImportResult?.Failures?.Any() == true)
                     {
                         AnsiConsole.MarkupLineInterpolated($"[maroon]Failed during garmin activity upload, file: {fileName}, skipping processing.[/]");
+
                         foreach (var failure in result?.DetailedImportResult?.Failures)
                             foreach (var message in failure.Messages)
                                 AnsiConsole.MarkupLineInterpolated($"\t[maroon]Code: {message.Code}, Content: {message.Content}[/]");
@@ -143,6 +150,7 @@ namespace RenphoGarminSync.ConsoleApp
             {
                 var measurementTime = DateTimeOffset.FromUnixTimeSeconds(measurement.TimeStamp.Value);
                 var timeString = measurementTime.ToString("yyyy-MM-dd HH:ss");
+
                 table.AddRow(timeString, $"{measurement.Weight:F1}", $"{measurement.BMI:F1}", $"{measurement.Id}");
             }
 
@@ -159,27 +167,83 @@ namespace RenphoGarminSync.ConsoleApp
 
         private async Task<IEnumerable<BodyScaleResponse>> GetMeasurementsForUserAsync(long userId)
         {
+            System.Console.WriteLine("[RENPHO DIAGNOSTIC] Starting measurement retrieval.");
+
             var deviceInfo = await _renphoApi.GetDeviceInfoAsync();
-            if (deviceInfo is null || !deviceInfo.Scale?.Any() == true)
+
+            if (deviceInfo is null)
+            {
+                System.Console.WriteLine("[RENPHO DIAGNOSTIC] Device info response is NULL.");
                 return [];
+            }
+
+            if (deviceInfo.Scale is null || !deviceInfo.Scale.Any())
+            {
+                System.Console.WriteLine("[RENPHO DIAGNOSTIC] No scales returned by device/count.");
+                return [];
+            }
+
+            System.Console.WriteLine($"[RENPHO DIAGNOSTIC] Number of scale entries: {deviceInfo.Scale.Length}");
 
             var outWeightIns = new List<BodyScaleResponse>();
+
             foreach (var scaleInfo in deviceInfo.Scale)
             {
-                if (!scaleInfo.UserIds.Contains(userId))
-                    continue;
+                var associatedWithUser = scaleInfo.UserIds?.Contains(userId) == true;
 
-                var measurements = await _renphoApi.GetBodyScaleMeasurements(userId, scaleInfo.Count, scaleInfo.TableName);
-                if (measurements is null)
-                    continue;
+                System.Console.WriteLine(
+                    $"[RENPHO DIAGNOSTIC] Scale: count={scaleInfo.Count}, " +
+                    $"associatedWithUser={associatedWithUser}");
 
-                measurements = measurements.Where(x => x.UserId == userId && x.DeviceType.GetDeviceTypeForTag().IsBodyWeightScale());
-
-                foreach (var measurement in measurements)
+                if (!associatedWithUser)
                 {
-                    outWeightIns.Add(measurement);
+                    System.Console.WriteLine("[RENPHO DIAGNOSTIC] Skipping scale: user does not match.");
+                    continue;
                 }
+
+                var measurements = await _renphoApi.GetBodyScaleMeasurements(
+                    userId,
+                    scaleInfo.Count,
+                    scaleInfo.TableName);
+
+                if (measurements is null)
+                {
+                    System.Console.WriteLine("[RENPHO DIAGNOSTIC] Measurement query returned NULL.");
+                    continue;
+                }
+
+                var rawMeasurements = measurements.ToList();
+
+                var matchingUserMeasurements = rawMeasurements
+                    .Where(x => x.UserId == userId)
+                    .ToList();
+
+                var bodyScaleMeasurements = matchingUserMeasurements
+                    .Where(x => x.DeviceType.GetDeviceTypeForTag().IsBodyWeightScale())
+                    .ToList();
+
+                System.Console.WriteLine(
+                    $"[RENPHO DIAGNOSTIC] Raw measurements: {rawMeasurements.Count}");
+
+                System.Console.WriteLine(
+                    $"[RENPHO DIAGNOSTIC] Matching user: {matchingUserMeasurements.Count}");
+
+                System.Console.WriteLine(
+                    $"[RENPHO DIAGNOSTIC] Recognized body-scale measurements: {bodyScaleMeasurements.Count}");
+
+                foreach (var deviceType in rawMeasurements
+                    .Select(x => x.DeviceType ?? "(null)")
+                    .Distinct())
+                {
+                    System.Console.WriteLine(
+                        $"[RENPHO DIAGNOSTIC] Device type: {deviceType}");
+                }
+
+                outWeightIns.AddRange(bodyScaleMeasurements);
             }
+
+            System.Console.WriteLine(
+                $"[RENPHO DIAGNOSTIC] Total retained measurements: {outWeightIns.Count}");
 
             return outWeightIns.OrderByDescending(x => x.TimeStamp).ToList();
         }
@@ -190,14 +254,17 @@ namespace RenphoGarminSync.ConsoleApp
                 return await _renphoApi.GetLoggedInUserIdAsync();
 
             var loggedInUserInfo = await _renphoApi.GetLoggedInUserInfoAsync();
+
             if (loggedInUserInfo.AccountName == targetUserName)
                 return loggedInUserInfo.Id;
 
             var guestInfos = await _renphoApi.QueryFamilyMembers();
+
             if (!guestInfos.Any())
                 throw new InvalidOperationException("Logged in user doesn't match the requested name, and no family members were found");
 
             var matchingInfo = guestInfos.FirstOrDefault(x => x.AccountName == targetUserName);
+
             if (matchingInfo is null)
                 throw new InvalidOperationException("No Renpho user found matching the requested name");
 

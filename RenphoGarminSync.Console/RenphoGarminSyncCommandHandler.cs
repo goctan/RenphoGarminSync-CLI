@@ -82,12 +82,16 @@ namespace RenphoGarminSync.ConsoleApp
                     return 0;
                 }
 
-                var newMeasurements = measurements.Where(x => newMeasurementIds.Contains(x.Id.Value));
+                var newMeasurements = measurements
+                    .Where(x => newMeasurementIds.Contains(x.Id.Value))
+                    .OrderByDescending(x => x.TimeStamp)
+                    .ToList();
+
                 DrawMeasurementsTable("New Measurements", newMeasurements);
 
                 if (_dryRun)
                 {
-                    var diagnosticMeasurements = newMeasurements.ToList();
+                    var diagnosticMeasurements = newMeasurements;
 
                     System.Console.WriteLine("[FIT DIAGNOSTIC] Données disponibles :");
                     System.Console.WriteLine($"Graisse corporelle : {diagnosticMeasurements.Count(x => x.BodyFat.HasValue)} / {diagnosticMeasurements.Count}");
@@ -95,12 +99,18 @@ namespace RenphoGarminSync.ConsoleApp
                     System.Console.WriteLine($"Masse musculaire : {diagnosticMeasurements.Count(x => x.Muscle.HasValue)} / {diagnosticMeasurements.Count}");
                     System.Console.WriteLine($"Masse osseuse : {diagnosticMeasurements.Count(x => x.Bone.HasValue)} / {diagnosticMeasurements.Count}");
 
-                    foreach (var measurement in diagnosticMeasurements.Take(3))
-                    {
-                        var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
-                        System.Console.WriteLine(
-                            $"[FIT DIAGNOSTIC] Pesée {measurement.Id} : fichier FIT généré ({fitContent.Length} octets).");
-                    }
+                    // Generate and save only the most recent measurement.
+                    var measurement = diagnosticMeasurements.First();
+                    var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
+                    var fileName = $"Renpho_Test_{measurement.Id}.fit";
+
+                    await SaveFitFile(measurement, fitContent, fileName);
+
+                    System.Console.WriteLine(
+                        $"[FIT DIAGNOSTIC] FIT enregistré : {fileName} ({fitContent.Length} octets).");
+
+                    System.Console.WriteLine(
+                        $"[FIT DIAGNOSTIC] Date de la pesée : {DateTimeOffset.FromUnixTimeSeconds(measurement.TimeStamp.Value):yyyy-MM-dd HH:mm:ss}");
 
                     AnsiConsole.MarkupLine("[green]Dry run - Aucun envoi vers Garmin.[/]");
                     return 0;
@@ -164,7 +174,7 @@ namespace RenphoGarminSync.ConsoleApp
             foreach (var measurement in measurements)
             {
                 var measurementTime = DateTimeOffset.FromUnixTimeSeconds(measurement.TimeStamp.Value);
-                var timeString = measurementTime.ToString("yyyy-MM-dd HH:ss");
+                var timeString = measurementTime.ToString("yyyy-MM-dd HH:mm");
 
                 table.AddRow(timeString, $"{measurement.Weight:F1}", $"{measurement.BMI:F1}", $"{measurement.Id}");
             }

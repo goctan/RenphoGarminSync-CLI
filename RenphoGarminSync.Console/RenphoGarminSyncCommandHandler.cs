@@ -35,7 +35,7 @@ namespace RenphoGarminSync.ConsoleApp
 
         // 17 November 2026 at 00:00 in France (UTC+1).
         private static readonly DateTimeOffset SyncStartDate =
-            new DateTimeOffset(2026, 11, 16, 23, 0, 0, TimeSpan.Zero);
+            new DateTimeOffset(2026, 11, 16, 18, 0, 0, TimeSpan.Zero);
 
         public RenphoGarminSyncCommandHandler(
             string garminUsername,

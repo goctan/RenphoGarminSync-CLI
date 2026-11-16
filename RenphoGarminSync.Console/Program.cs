@@ -48,7 +48,7 @@ namespace RenphoGarminSync.ConsoleApp
                 "Multi Factor Authentication code.");
             mfaCodeOption.IsRequired = false;
 
-            var garminAuthCommand = new Command(
+            var command = new Command(
                 "garmin",
                 "Check and configure garmin authorization.")
             {
@@ -57,7 +57,7 @@ namespace RenphoGarminSync.ConsoleApp
                 mfaCodeOption
             };
 
-            garminAuthCommand.SetHandler(async (context) =>
+            command.SetHandler(async (context) =>
             {
                 var username =
                     context.ParseResult.GetValueForOption(usernameOption);
@@ -70,14 +70,12 @@ namespace RenphoGarminSync.ConsoleApp
 
                 try
                 {
-                    var command =
+                    var handler =
                         new GarminAuthCommandHandler(
                             username, password, mfaCode);
 
-                    var exitCode =
-                        await command.InvokeAsync();
-
-                    context.ExitCode = exitCode;
+                    context.ExitCode =
+                        await handler.InvokeAsync();
                 }
                 catch (Exception ex)
                 {
@@ -86,7 +84,7 @@ namespace RenphoGarminSync.ConsoleApp
                 }
             });
 
-            return garminAuthCommand;
+            return command;
         }
 
         static Command GenerateRenphoAuthCommand()
@@ -101,7 +99,7 @@ namespace RenphoGarminSync.ConsoleApp
                 "Renpho password.");
             passwordOption.IsRequired = true;
 
-            var renphoAuthCommand = new Command(
+            var command = new Command(
                 "renpho",
                 "Check and configure renpho authorization.")
             {
@@ -109,7 +107,7 @@ namespace RenphoGarminSync.ConsoleApp
                 passwordOption
             };
 
-            renphoAuthCommand.SetHandler(async (context) =>
+            command.SetHandler(async (context) =>
             {
                 var username =
                     context.ParseResult.GetValueForOption(usernameOption);
@@ -119,14 +117,12 @@ namespace RenphoGarminSync.ConsoleApp
 
                 try
                 {
-                    var command =
+                    var handler =
                         new RenphoAuthCommandHandler(
                             username, password);
 
-                    var exitCode =
-                        await command.InvokeAsync();
-
-                    context.ExitCode = exitCode;
+                    context.ExitCode =
+                        await handler.InvokeAsync();
                 }
                 catch (Exception ex)
                 {
@@ -135,7 +131,7 @@ namespace RenphoGarminSync.ConsoleApp
                 }
             });
 
-            return renphoAuthCommand;
+            return command;
         }
 
         static Command GenerateSyncCommand()
@@ -166,41 +162,15 @@ namespace RenphoGarminSync.ConsoleApp
             renphoProfileOption.IsRequired = false;
             renphoProfileOption.SetDefaultValue(string.Empty);
 
-            var dryRunOption = new Option<bool>(
-                ["--dry-run"],
-                "Generate one diagnostic FIT file without uploading.");
-            dryRunOption.IsRequired = false;
-            dryRunOption.SetDefaultValue(false);
-
-            var noFitFilesOption = new Option<bool>(
-                ["--no-fit-files"],
-                "Skip saving FIT files before uploading to Garmin.");
-            noFitFilesOption.IsRequired = false;
-            noFitFilesOption.SetDefaultValue(false);
-
-            var exportAllFitOption = new Option<bool>(
-                ["--export-all-fit"],
-                "Export all unhandled measurements as FIT files without uploading.");
-            exportAllFitOption.SetDefaultValue(false);
-
-            var initializeHistoryOption = new Option<bool>(
-                ["--initialize-history"],
-                "Mark only measurements in the historical export manifest as handled.");
-            initializeHistoryOption.SetDefaultValue(false);
-
             var syncCommand = new Command(
                 "sync",
-                "Sync Renpho body measurements with Garmin.")
+                "Synchronize new Renpho body measurements with Garmin.")
             {
                 garminUsernameOption,
                 garminPasswordOption,
                 renphoUsernameOption,
                 renphoPasswordOption,
-                renphoProfileOption,
-                dryRunOption,
-                noFitFilesOption,
-                exportAllFitOption,
-                initializeHistoryOption
+                renphoProfileOption
             };
 
             syncCommand.SetHandler(async (context) =>
@@ -225,40 +195,18 @@ namespace RenphoGarminSync.ConsoleApp
                     context.ParseResult.GetValueForOption(
                         renphoProfileOption);
 
-                var dryRun =
-                    context.ParseResult.GetValueForOption(
-                        dryRunOption);
-
-                var noFitFiles =
-                    context.ParseResult.GetValueForOption(
-                        noFitFilesOption);
-
-                var exportAllFit =
-                    context.ParseResult.GetValueForOption(
-                        exportAllFitOption);
-
-                var initializeHistory =
-                    context.ParseResult.GetValueForOption(
-                        initializeHistoryOption);
-
                 try
                 {
-                    var command =
+                    var handler =
                         new RenphoGarminSyncCommandHandler(
                             garminUsername,
                             garminPassword,
                             renphoUsername,
                             renphoPassword,
-                            renphoProfile,
-                            dryRun,
-                            noFitFiles,
-                            exportAllFit,
-                            initializeHistory);
+                            renphoProfile);
 
-                    var exitCode =
-                        await command.InvokeAsync();
-
-                    context.ExitCode = exitCode;
+                    context.ExitCode =
+                        await handler.InvokeAsync();
                 }
                 catch (Exception ex)
                 {

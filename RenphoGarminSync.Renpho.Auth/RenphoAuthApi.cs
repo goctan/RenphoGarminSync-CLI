@@ -1,4 +1,5 @@
-﻿using RenphoGarminSync.Renpho.Shared;
+
+using RenphoGarminSync.Renpho.Shared;
 using RenphoGarminSync.Renpho.Shared.Exceptions;
 using RenphoGarminSync.Renpho.Shared.Extensions;
 using RenphoGarminSync.Renpho.Shared.Models;
@@ -46,23 +47,46 @@ namespace RenphoGarminSync.Renpho.Auth
                 }
             };
 
-            var loginRequest = BaseEncryptedRequest.GetForObject(loginModel, _config.EncryptionSecret);
-            var restRequest = new RestRequest(RenphoApiEndpoints.Login, Method.Post);
+            var loginRequest = BaseEncryptedRequest.GetForObject(
+                loginModel,
+                _config.EncryptionSecret
+            );
+
+            var restRequest = new RestRequest(
+                RenphoApiEndpoints.Login,
+                Method.Post
+            );
+
+            // Additional RENPHO authentication headers
+            restRequest.AddHeader("appVersion", _config.AppVersion);
+            restRequest.AddHeader("platform", _config.Platform);
+
             restRequest.AddJsonBody(loginRequest);
 
             var result = await _authClient.ExecuteAsync<BaseEncryptedResponse<LoginResponse>>(restRequest);
+
             if (result == null)
-                throw new RenphoException(RenphoStatusCode.CUSTOM_AUTH_FAILED, "Null result");
+                throw new RenphoException(
+                    RenphoStatusCode.CUSTOM_AUTH_FAILED,
+                    "Null result"
+                );
 
             if (!result.IsSuccessful || result.Data is null)
-                throw new RenphoException(RenphoStatusCode.CUSTOM_AUTH_FAILED, "Unsuccesful login");
+                throw new RenphoException(
+                    RenphoStatusCode.CUSTOM_AUTH_FAILED,
+                    "Unsuccesful login"
+                );
 
             if (!result.Data.IsSuccessful)
                 throw new RenphoException(result.Data.Code, result.Data.Message);
 
             var userDetails = result.Data?.DecryptData(_config.EncryptionSecret);
+
             if (userDetails is null || userDetails.Login is null)
-                throw new RenphoException(RenphoStatusCode.CUSTOM_AUTH_FAILED, "Response doesn't contain user info");
+                throw new RenphoException(
+                    RenphoStatusCode.CUSTOM_AUTH_FAILED,
+                    "Response doesn't contain user info"
+                );
 
             return userDetails;
         }
@@ -70,25 +94,41 @@ namespace RenphoGarminSync.Renpho.Auth
         public async Task<GetTokenTimeResponse> GetTokenTimeAsync(string token, long userId)
         {
             var tokenInfoRequest = BaseEncryptedRequest.GetEmpty(_config.EncryptionSecret);
-            var restRequest = new RestRequest(RenphoApiEndpoints.GetTokenTime, Method.Post);
+
+            var restRequest = new RestRequest(
+                RenphoApiEndpoints.GetTokenTime,
+                Method.Post
+            );
+
             restRequest.AddJsonBody(tokenInfoRequest);
             restRequest.AddHeader("token", token);
             restRequest.AddHeader("userId", userId.ToString());
             restRequest.AddHeader("appVersion", _config.AppVersion);
 
             var result = await _authClient.ExecuteAsync<BaseEncryptedResponse<GetTokenTimeResponse>>(restRequest);
+
             if (result == null)
-                throw new RenphoException(RenphoStatusCode.CUSTOM_AUTH_FAILED, "Null result");
+                throw new RenphoException(
+                    RenphoStatusCode.CUSTOM_AUTH_FAILED,
+                    "Null result"
+                );
 
             if (!result.IsSuccessful || result.Data is null)
-                throw new RenphoException(RenphoStatusCode.CUSTOM_AUTH_FAILED, "Unsuccesful request");
+                throw new RenphoException(
+                    RenphoStatusCode.CUSTOM_AUTH_FAILED,
+                    "Unsuccesful request"
+                );
 
             if (!result.Data.IsSuccessful)
                 throw new RenphoException(result.Data.Code, result.Data.Message);
 
             var tokenTime = result.Data?.DecryptData(_config.EncryptionSecret);
+
             if (tokenTime is null)
-                throw new RenphoException(RenphoStatusCode.CUSTOM_AUTH_FAILED, "Result is null");
+                throw new RenphoException(
+                    RenphoStatusCode.CUSTOM_AUTH_FAILED,
+                    "Result is null"
+                );
 
             return tokenTime;
         }

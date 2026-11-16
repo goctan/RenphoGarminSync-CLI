@@ -87,7 +87,22 @@ namespace RenphoGarminSync.ConsoleApp
 
                 if (_dryRun)
                 {
-                    AnsiConsole.MarkupLine("[green]Dry run - Skipping processing of the measurements.[/]");
+                    var diagnosticMeasurements = newMeasurements.ToList();
+
+                    System.Console.WriteLine("[FIT DIAGNOSTIC] Données disponibles :");
+                    System.Console.WriteLine($"Graisse corporelle : {diagnosticMeasurements.Count(x => x.BodyFat.HasValue)} / {diagnosticMeasurements.Count}");
+                    System.Console.WriteLine($"Eau corporelle : {diagnosticMeasurements.Count(x => x.Water.HasValue)} / {diagnosticMeasurements.Count}");
+                    System.Console.WriteLine($"Masse musculaire : {diagnosticMeasurements.Count(x => x.Muscle.HasValue)} / {diagnosticMeasurements.Count}");
+                    System.Console.WriteLine($"Masse osseuse : {diagnosticMeasurements.Count(x => x.Bone.HasValue)} / {diagnosticMeasurements.Count}");
+
+                    foreach (var measurement in diagnosticMeasurements.Take(3))
+                    {
+                        var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
+                        System.Console.WriteLine(
+                            $"[FIT DIAGNOSTIC] Pesée {measurement.Id} : fichier FIT généré ({fitContent.Length} octets).");
+                    }
+
+                    AnsiConsole.MarkupLine("[green]Dry run - Aucun envoi vers Garmin.[/]");
                     return 0;
                 }
 

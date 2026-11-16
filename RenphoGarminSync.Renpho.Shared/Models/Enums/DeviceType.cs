@@ -1,4 +1,5 @@
-﻿using System.Runtime.Serialization;
+
+using System.Runtime.Serialization;
 
 namespace RenphoGarminSync.Renpho.Shared.Models.Enums
 {
@@ -99,6 +100,9 @@ namespace RenphoGarminSync.Renpho.Shared.Models.Enums
 
         [EnumMember(Value = "00006")]
         DeviceTypeTreadmill = 6,
+
+        [EnumMember(Value = "00049")]
+        DeviceTypeESCS20M = 49,
 
         [EnumMember(Value = "")]
         DeviceTypeUnsupported = 0,

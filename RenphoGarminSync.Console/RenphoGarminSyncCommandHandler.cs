@@ -18,8 +18,6 @@ using RenphoGarminSync.Renpho.Shared.Models.Responses;
 using Spectre.Console;
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -33,156 +31,161 @@ namespace RenphoGarminSync.ConsoleApp
 
         private readonly Random _random = new Random();
         private readonly string _renphoProfile;
-        private readonly bool _dryRun;
-        private readonly bool _noFitFiles;
-        private readonly bool _exportAllFit;
-        private readonly bool _initializeHistory;
-        private AppConfig _config;
+        private readonly AppConfig _config;
+
+        // 17 November 2026 at 00:00 in France (UTC+1).
+        private static readonly DateTimeOffset SyncStartDate =
+            new DateTimeOffset(2026, 11, 16, 23, 0, 0, TimeSpan.Zero);
 
         public RenphoGarminSyncCommandHandler(
             string garminUsername,
             string garminPassword,
             string renphoUsername,
             string renphoPassword,
-            string renphoProfile,
-            bool dryRun,
-            bool noFitFiles,
-            bool exportAllFit,
-            bool initializeHistory)
+            string renphoProfile)
         {
-            if (exportAllFit && initializeHistory)
-                throw new ArgumentException("Export and initialization modes cannot be used together.");
-
             _config = ConfigurationHelper.GetApplicationConfig();
 
-            var garminAuthCache = new GarminFileBasedAuthCache(_config.General.CachePath);
-            var garminAuthApi = new GarminAuthApi(_config.Garmin);
-            var garminAuthService = new GarminAuthService(
-                garminUsername, garminPassword, garminAuthCache, garminAuthApi);
+            var garminAuthCache =
+                new GarminFileBasedAuthCache(_config.General.CachePath);
 
-            var authenticator = new GarminApiAuthenticator(garminAuthService);
-            _garminApi = new GarminApi(_config.Garmin, authenticator);
+            var garminAuthApi =
+                new GarminAuthApi(_config.Garmin);
 
-            var renphoAuthCache = new RenphoInMemoryAuthCache();
-            var renphoAuthApi = new RenphoAuthApi(_config.Renpho);
-            var renphoAuthService = new RenphoAuthService(
-                renphoUsername, renphoPassword, renphoAuthCache, renphoAuthApi);
-            var renphoAuthenticator = new RenphoApiAuthenticator(
-                renphoAuthService, _config.Renpho);
-            _renphoApi = new RenphoApi(
-                _config.Renpho.EncryptionSecret, renphoAuthenticator);
+            var garminAuthService =
+                new GarminAuthService(
+                    garminUsername,
+                    garminPassword,
+                    garminAuthCache,
+                    garminAuthApi);
+
+            var authenticator =
+                new GarminApiAuthenticator(garminAuthService);
+
+            _garminApi =
+                new GarminApi(_config.Garmin, authenticator);
+
+            var renphoAuthCache =
+                new RenphoInMemoryAuthCache();
+
+            var renphoAuthApi =
+                new RenphoAuthApi(_config.Renpho);
+
+            var renphoAuthService =
+                new RenphoAuthService(
+                    renphoUsername,
+                    renphoPassword,
+                    renphoAuthCache,
+                    renphoAuthApi);
+
+            var renphoAuthenticator =
+                new RenphoApiAuthenticator(
+                    renphoAuthService,
+                    _config.Renpho);
+
+            _renphoApi =
+                new RenphoApi(
+                    _config.Renpho.EncryptionSecret,
+                    renphoAuthenticator);
 
             _measurementsRepository =
-                new CSVHandledMeasurementsRepository(_config.General.CachePath);
+                new CSVHandledMeasurementsRepository(
+                    _config.General.CachePath);
 
             _renphoProfile = renphoProfile;
-            _dryRun = dryRun;
-            _noFitFiles = noFitFiles;
-            _exportAllFit = exportAllFit;
-            _initializeHistory = initializeHistory;
         }
 
         public async Task<int> InvokeAsync()
         {
             try
             {
-                var renphoUserId = await GetRenphoApiUserIdAsync(_renphoProfile);
-                var measurements = (await GetMeasurementsForUserAsync(renphoUserId)).ToList();
+                var renphoUserId =
+                    await GetRenphoApiUserIdAsync(_renphoProfile);
+
+                var measurements =
+                    (await GetMeasurementsForUserAsync(renphoUserId))
+                    .ToList();
 
                 if (!measurements.Any())
                 {
                     AnsiConsole.MarkupLine(
-                        "[maroon]No measurements were found for current Renpho user.[/]");
+                        "[yellow]Aucune pesée RENPHO trouvée.[/]");
                     return 0;
                 }
 
-                // INITIALIZE: mark only measurements listed in the export manifest.
-                if (_initializeHistory)
+                // Keep only measurements from 17 November 2026 onwards.
+                var eligibleMeasurements = measurements
+                    .Where(x =>
+                        x.TimeStamp.HasValue &&
+                        DateTimeOffset.FromUnixTimeSeconds(
+                            x.TimeStamp.Value) >= SyncStartDate)
+                    .ToList();
+
+                System.Console.WriteLine(
+                    $"[SYNC] Pesées RENPHO récupérées : {measurements.Count}");
+
+                System.Console.WriteLine(
+                    $"[SYNC] Pesées à partir du 17/11/2026 : {eligibleMeasurements.Count}");
+
+                if (!eligibleMeasurements.Any())
                 {
-                    await InitializeExportedHistoryAsync(renphoUserId, measurements);
+                    AnsiConsole.MarkupLine(
+                        "[green]Aucune pesée à synchroniser après la date de départ.[/]");
                     return 0;
                 }
 
-                var measurementIds = measurements.Select(x => x.Id.Value);
-                var newMeasurementIds = (await _measurementsRepository
-                    .FilterOutHandledMeasurementsAsync(renphoUserId, measurementIds))
+                var measurementIds =
+                    eligibleMeasurements.Select(x => x.Id.Value);
+
+                var newMeasurementIds =
+                    (await _measurementsRepository
+                        .FilterOutHandledMeasurementsAsync(
+                            renphoUserId,
+                            measurementIds))
                     .ToHashSet();
 
-                var newMeasurements = measurements
+                var newMeasurements = eligibleMeasurements
                     .Where(x => newMeasurementIds.Contains(x.Id.Value))
-                    .OrderByDescending(x => x.TimeStamp)
+                    .OrderBy(x => x.TimeStamp)
                     .ToList();
 
                 if (!newMeasurements.Any())
                 {
                     AnsiConsole.MarkupLine(
-                        "[green]No new measurements have been detected.[/]");
-                    DrawMeasurementsTable("Last Measurements", measurements.Take(10));
+                        "[green]Aucune nouvelle pesée. Tout est déjà synchronisé.[/]");
                     return 0;
                 }
 
-                DrawMeasurementsTable("New Measurements", newMeasurements);
+                DrawMeasurementsTable(
+                    "Nouvelles pesées à synchroniser",
+                    newMeasurements);
 
-                // EXPORT: generate one FIT per unhandled measurement.
-                // Nothing is uploaded and nothing is marked as handled.
-                if (_exportAllFit)
-                {
-                    await ExportHistoricalMeasurementsAsync(newMeasurements);
-                    return 0;
-                }
-
-                // Original diagnostic mode: generate one test FIT only.
-                if (_dryRun)
-                {
-                    System.Console.WriteLine("[FIT DIAGNOSTIC] Données disponibles :");
-                    System.Console.WriteLine(
-                        $"Graisse corporelle : {newMeasurements.Count(x => x.BodyFat.HasValue)} / {newMeasurements.Count}");
-                    System.Console.WriteLine(
-                        $"Eau corporelle : {newMeasurements.Count(x => x.Water.HasValue)} / {newMeasurements.Count}");
-                    System.Console.WriteLine(
-                        $"Masse musculaire : {newMeasurements.Count(x => x.Muscle.HasValue)} / {newMeasurements.Count}");
-                    System.Console.WriteLine(
-                        $"Masse osseuse : {newMeasurements.Count(x => x.Bone.HasValue)} / {newMeasurements.Count}");
-
-                    var measurement = newMeasurements.First();
-                    var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
-                    var fileName = $"Renpho_Test_{measurement.Id}.fit";
-
-                    await SaveFitFile(fitContent, fileName);
-
-                    System.Console.WriteLine(
-                        $"[FIT DIAGNOSTIC] FIT enregistré : {fileName} ({fitContent.Length} octets).");
-
-                    System.Console.WriteLine(
-                        $"[FIT DIAGNOSTIC] Date de la pesée : {DateTimeOffset.FromUnixTimeSeconds(measurement.TimeStamp.Value):yyyy-MM-dd HH:mm:ss}");
-
-                    AnsiConsole.MarkupLine(
-                        "[green]Dry run - Aucun envoi vers Garmin.[/]");
-                    return 0;
-                }
-
-                // NORMAL SYNC: upload only measurements not previously handled.
                 foreach (var measurement in newMeasurements)
                 {
-                    var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
-                    var fileName = $"Renpho_{measurement.Id}.fit";
+                    var fitContent =
+                        FitGenerator.GenerateMeasurementFitFile(
+                            measurement);
 
-                    if (!_noFitFiles)
-                        await SaveFitFile(fitContent, fileName);
+                    var fileName =
+                        $"Renpho_{measurement.Id}.fit";
 
-                    var result = await _garminApi.UploadActivity(fileName, fitContent);
+                    var result =
+                        await _garminApi.UploadActivity(
+                            fileName,
+                            fitContent);
 
                     if (result?.DetailedImportResult?.Failures?.Any() == true)
                     {
                         AnsiConsole.MarkupLineInterpolated(
-                            $"[maroon]Failed during garmin activity upload, file: {fileName}, skipping processing.[/]");
+                            $"[maroon]Échec de l'import Garmin : {fileName}. La pesée sera retentée au prochain passage.[/]");
 
-                        foreach (var failure in result.DetailedImportResult.Failures)
+                        foreach (var failure in
+                            result.DetailedImportResult.Failures)
                         {
                             foreach (var message in failure.Messages)
                             {
                                 AnsiConsole.MarkupLineInterpolated(
-                                    $"\t[maroon]Code: {message.Code}, Content: {message.Content}[/]");
+                                    $"\t[maroon]Code : {message.Code}, contenu : {message.Content}[/]");
                             }
                         }
 
@@ -190,13 +193,14 @@ namespace RenphoGarminSync.ConsoleApp
                         continue;
                     }
 
-                    await _measurementsRepository.MarkMeasurementAsHandledAsync(
-                        renphoUserId,
-                        measurement.Id.Value,
-                        measurement.TimeStamp.Value);
+                    await _measurementsRepository
+                        .MarkMeasurementAsHandledAsync(
+                            renphoUserId,
+                            measurement.Id.Value,
+                            measurement.TimeStamp.Value);
 
                     AnsiConsole.MarkupLineInterpolated(
-                        $"[green]Uploaded Garmin FIT file, name: {fileName}[/]");
+                        $"[green]Pesée synchronisée avec Garmin : {fileName}[/]");
 
                     await Task.Delay(_random.Next(1000, 1500));
                 }
@@ -206,176 +210,37 @@ namespace RenphoGarminSync.ConsoleApp
             catch (GarminException ex)
             {
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[maroon]Garmin Exception encountered, code: [yellow]{ex.StatusCode}[/], message: [yellow]{ex.Message}[/][/]");
+                    $"[maroon]Erreur Garmin : code [yellow]{ex.StatusCode}[/], message : [yellow]{ex.Message}[/][/]");
                 return 1;
             }
             catch (RenphoException ex)
             {
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[maroon]Renpho Exception encountered, code: [yellow]{ex.StatusCode}[/], message: [yellow]{ex.Message}[/][/]");
+                    $"[maroon]Erreur RENPHO : code [yellow]{ex.StatusCode}[/], message : [yellow]{ex.Message}[/][/]");
                 return 1;
             }
-        }
-
-        private async Task ExportHistoricalMeasurementsAsync(
-            List<BodyScaleResponse> measurements)
-        {
-            var manifestPath = GetHistoryManifestPath();
-
-            // Do not leave an old manifest if this export fails.
-            if (File.Exists(manifestPath))
-                File.Delete(manifestPath);
-
-            var manifestLines = new List<string>();
-            var exportedCount = 0;
-
-            foreach (var measurement in measurements)
-            {
-                var fitContent = FitGenerator.GenerateMeasurementFitFile(measurement);
-                var fileName = $"Renpho_History_{measurement.Id}.fit";
-
-                await SaveFitFile(fitContent, fileName);
-
-                manifestLines.Add(
-                    $"{measurement.Id.Value},{measurement.TimeStamp.Value}");
-
-                exportedCount++;
-
-                System.Console.WriteLine(
-                    $"[HISTORY EXPORT] {fileName} ({fitContent.Length} octets)");
-            }
-
-            if (exportedCount == 0)
-                throw new InvalidOperationException("No FIT files were exported.");
-
-            await File.WriteAllLinesAsync(manifestPath, manifestLines);
-
-            AnsiConsole.MarkupLine(
-                $"[green]Export terminé : {exportedCount} fichiers FIT générés.[/]");
-
-            AnsiConsole.MarkupLine(
-                "[yellow]Aucun envoi Garmin effectué. Aucune pesée marquée comme traitée.[/]");
-
-            System.Console.WriteLine(
-                $"[HISTORY EXPORT] Manifeste enregistré : {manifestPath}");
-        }
-
-        private async Task InitializeExportedHistoryAsync(
-            long renphoUserId,
-            List<BodyScaleResponse> currentMeasurements)
-        {
-            var manifestPath = GetHistoryManifestPath();
-
-            if (!File.Exists(manifestPath))
-            {
-                throw new FileNotFoundException(
-                    "Le manifeste d'export est introuvable. Lance d'abord le mode export historique.",
-                    manifestPath);
-            }
-
-            var lines = await File.ReadAllLinesAsync(manifestPath);
-            var manifest = new List<(long Id, long Timestamp)>();
-
-            foreach (var line in lines.Where(x => !string.IsNullOrWhiteSpace(x)))
-            {
-                var parts = line.Split(',');
-
-                if (parts.Length != 2 ||
-                    !long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) ||
-                    !long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var timestamp))
-                {
-                    throw new InvalidOperationException(
-                        $"Ligne invalide dans le manifeste : {line}");
-                }
-
-                manifest.Add((id, timestamp));
-            }
-
-            if (manifest.Count == 0)
-                throw new InvalidOperationException("Le manifeste ne contient aucune pesée.");
-
-            var measurementsById = currentMeasurements
-                .Where(x => x.Id.HasValue)
-                .ToDictionary(x => x.Id.Value, x => x);
-
-            // Validate the complete manifest before changing the handled-measurements state.
-            var missingIds = manifest
-                .Where(x => !measurementsById.ContainsKey(x.Id))
-                .Select(x => x.Id)
-                .ToList();
-
-            if (missingIds.Any())
-            {
-                throw new InvalidOperationException(
-                    "Certaines pesées exportées sont introuvables dans RENPHO : " +
-                    string.Join(", ", missingIds));
-            }
-
-            var initializedCount = 0;
-
-            foreach (var item in manifest)
-            {
-                await _measurementsRepository.MarkMeasurementAsHandledAsync(
-                    renphoUserId,
-                    item.Id,
-                    item.Timestamp);
-
-                initializedCount++;
-            }
-
-            var markerPath = GetHistoryInitializedMarkerPath();
-
-            await File.WriteAllTextAsync(
-                markerPath,
-                DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-
-            File.Delete(manifestPath);
-
-            AnsiConsole.MarkupLine(
-                $"[green]Initialisation terminée : {initializedCount} pesées historiques marquées comme traitées.[/]");
-
-            AnsiConsole.MarkupLine(
-                "[green]Les prochaines pesées pourront être synchronisées automatiquement.[/]");
-        }
-
-        private string GetHistoryManifestPath()
-        {
-            return Path.Combine(
-                _config.General.CachePath,
-                "history-export-manifest.csv");
-        }
-
-        private string GetHistoryInitializedMarkerPath()
-        {
-            return Path.Combine(
-                _config.General.CachePath,
-                "history-initialized.txt");
         }
 
         private static void DrawMeasurementsTable(
             string tableHeader,
             IEnumerable<BodyScaleResponse> measurements)
         {
-            if (!measurements.Any())
-                return;
-
             var table = new Table();
             table.Title = new TableTitle(tableHeader);
 
             table.AddColumn("Date");
-            table.AddColumn("Weight");
-            table.AddColumn("BMI");
+            table.AddColumn("Poids");
+            table.AddColumn("IMC");
             table.AddColumn("ID");
 
             foreach (var measurement in measurements)
             {
                 var measurementTime =
-                    DateTimeOffset.FromUnixTimeSeconds(measurement.TimeStamp.Value);
-
-                var timeString = measurementTime.ToString("yyyy-MM-dd HH:mm");
+                    DateTimeOffset.FromUnixTimeSeconds(
+                        measurement.TimeStamp.Value);
 
                 table.AddRow(
-                    timeString,
+                    measurementTime.ToString("yyyy-MM-dd HH:mm"),
                     $"{measurement.Weight:F1}",
                     $"{measurement.BMI:F1}",
                     $"{measurement.Id}");
@@ -384,113 +249,59 @@ namespace RenphoGarminSync.ConsoleApp
             AnsiConsole.Write(table);
         }
 
-        private async Task SaveFitFile(byte[] fitContent, string fileName)
-        {
-            var fitFilesDir = Path.Combine(
-                _config.General.CachePath,
-                "FitFiles");
-
-            Directory.CreateDirectory(fitFilesDir);
-
-            var filePath = Path.Combine(fitFilesDir, fileName);
-
-            await File.WriteAllBytesAsync(filePath, fitContent);
-        }
-
         private async Task<IEnumerable<BodyScaleResponse>>
             GetMeasurementsForUserAsync(long userId)
         {
             System.Console.WriteLine(
-                "[RENPHO DIAGNOSTIC] Starting measurement retrieval.");
+                "[RENPHO] Récupération des pesées.");
 
-            var deviceInfo = await _renphoApi.GetDeviceInfoAsync();
+            var deviceInfo =
+                await _renphoApi.GetDeviceInfoAsync();
 
-            if (deviceInfo is null)
+            if (deviceInfo?.Scale == null ||
+                !deviceInfo.Scale.Any())
             {
-                System.Console.WriteLine(
-                    "[RENPHO DIAGNOSTIC] Device info response is NULL.");
                 return [];
             }
 
-            if (deviceInfo.Scale is null || !deviceInfo.Scale.Any())
-            {
-                System.Console.WriteLine(
-                    "[RENPHO DIAGNOSTIC] No scales returned by device/count.");
-                return [];
-            }
-
-            System.Console.WriteLine(
-                $"[RENPHO DIAGNOSTIC] Number of scale entries: {deviceInfo.Scale.Length}");
-
-            var outWeightIns = new List<BodyScaleResponse>();
+            var outWeightIns =
+                new List<BodyScaleResponse>();
 
             foreach (var scaleInfo in deviceInfo.Scale)
             {
                 var associatedWithUser =
                     scaleInfo.UserIds?.Contains(userId) == true;
 
-                System.Console.WriteLine(
-                    $"[RENPHO DIAGNOSTIC] Scale: count={scaleInfo.Count}, " +
-                    $"associatedWithUser={associatedWithUser}");
-
                 if (!associatedWithUser)
-                {
-                    System.Console.WriteLine(
-                        "[RENPHO DIAGNOSTIC] Skipping scale: user does not match.");
                     continue;
-                }
 
-                var measurements = await _renphoApi.GetBodyScaleMeasurements(
-                    userId,
-                    scaleInfo.Count,
-                    scaleInfo.TableName);
+                var measurements =
+                    await _renphoApi.GetBodyScaleMeasurements(
+                        userId,
+                        scaleInfo.Count,
+                        scaleInfo.TableName);
 
                 if (measurements is null)
-                {
-                    System.Console.WriteLine(
-                        "[RENPHO DIAGNOSTIC] Measurement query returned NULL.");
                     continue;
-                }
 
-                var rawMeasurements = measurements.ToList();
-
-                var matchingUserMeasurements = rawMeasurements
+                var bodyScaleMeasurements = measurements
                     .Where(x => x.UserId == userId)
+                    .Where(x =>
+                        x.DeviceType
+                            .GetDeviceTypeForTag()
+                            .IsBodyWeightScale())
                     .ToList();
-
-                var bodyScaleMeasurements = matchingUserMeasurements
-                    .Where(x => x.DeviceType.GetDeviceTypeForTag().IsBodyWeightScale())
-                    .ToList();
-
-                System.Console.WriteLine(
-                    $"[RENPHO DIAGNOSTIC] Raw measurements: {rawMeasurements.Count}");
-
-                System.Console.WriteLine(
-                    $"[RENPHO DIAGNOSTIC] Matching user: {matchingUserMeasurements.Count}");
-
-                System.Console.WriteLine(
-                    $"[RENPHO DIAGNOSTIC] Recognized body-scale measurements: {bodyScaleMeasurements.Count}");
-
-                foreach (var deviceType in rawMeasurements
-                    .Select(x => x.DeviceType ?? "(null)")
-                    .Distinct())
-                {
-                    System.Console.WriteLine(
-                        $"[RENPHO DIAGNOSTIC] Device type: {deviceType}");
-                }
 
                 outWeightIns.AddRange(bodyScaleMeasurements);
             }
-
-            System.Console.WriteLine(
-                $"[RENPHO DIAGNOSTIC] Total retained measurements: {outWeightIns.Count}");
 
             return outWeightIns
                 .OrderByDescending(x => x.TimeStamp)
                 .ToList();
         }
 
-        private async Task<long> GetRenphoApiUserIdAsync(string targetUserName)
+        private async Task<long> GetRenphoApiUserIdAsync(
+            string targetUserName)
         {
             if (string.IsNullOrWhiteSpace(targetUserName))
                 return await _renphoApi.GetLoggedInUserIdAsync();
@@ -501,21 +312,23 @@ namespace RenphoGarminSync.ConsoleApp
             if (loggedInUserInfo.AccountName == targetUserName)
                 return loggedInUserInfo.Id;
 
-            var guestInfos = await _renphoApi.QueryFamilyMembers();
+            var guestInfos =
+                await _renphoApi.QueryFamilyMembers();
 
             if (!guestInfos.Any())
             {
                 throw new InvalidOperationException(
-                    "Logged in user doesn't match the requested name, and no family members were found");
+                    "Logged in user doesn't match the requested name, and no family members were found.");
             }
 
             var matchingInfo =
-                guestInfos.FirstOrDefault(x => x.AccountName == targetUserName);
+                guestInfos.FirstOrDefault(
+                    x => x.AccountName == targetUserName);
 
             if (matchingInfo is null)
             {
                 throw new InvalidOperationException(
-                    "No Renpho user found matching the requested name");
+                    "No Renpho user found matching the requested name.");
             }
 
             return matchingInfo.Id;

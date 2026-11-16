@@ -1,4 +1,5 @@
-﻿using RenphoGarminSync.Renpho.Shared.Models.Enums;
+
+using RenphoGarminSync.Renpho.Shared.Models.Enums;
 using System;
 using System.Linq;
 using System.Reflection;
@@ -31,24 +32,22 @@ namespace RenphoGarminSync.Renpho.Shared.Extensions
 
             return attibute.Value;
         }
+
         public static DeviceType GetDeviceTypeForTag(this string tag)
         {
             if (string.IsNullOrWhiteSpace(tag))
                 return DeviceType.DeviceTypeUnsupported;
 
-            var allDeviceValues = Enum.GetValues<DeviceType>();
             var matchingEnumField = typeof(DeviceType)
                 .GetFields()
                 .FirstOrDefault(x =>
                 {
                     var memberAttribute = x.GetCustomAttribute<EnumMemberAttribute>();
+
                     if (memberAttribute is null)
                         return false;
 
-                    if (memberAttribute.Value.Equals(tag))
-                        return true;
-
-                    return false;
+                    return memberAttribute.Value.Equals(tag);
                 });
 
             if (matchingEnumField is null)
@@ -71,6 +70,7 @@ namespace RenphoGarminSync.Renpho.Shared.Extensions
                 DeviceType.DeviceTypeYKBWifiBleScale => true,
                 DeviceType.DeviceTypeScaleDoubleModel => true,
                 DeviceType.DeviceTypeBodyWeightScale => true,
+                DeviceType.DeviceTypeESCS20M => true,
                 _ => false,
             };
         }
